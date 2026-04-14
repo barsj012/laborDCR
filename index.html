@@ -13,7 +13,7 @@ body { background: #F2EFE8; font-family: Georgia, serif; }
 input::-webkit-outer-spin-button,
 input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 input[type=number] { -moz-appearance: textfield; }
-@media print {
+@media print { -webkit-print-color-adjust: exact; print-color-adjust: exact;
   .no-print { display: none !important; }
   body { background: white; }
 }
