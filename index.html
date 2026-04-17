@@ -474,3 +474,19 @@ ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(
 </script>
 </body>
 </html>
+            React.createElement(SBCalcRow, { label: "TSD at " + fmtTime(SLOTS[lastActualIdx].hour, SLOTS[lastActualIdx].min), value: currentActual + " transactions" }),
+            React.createElement(SBCalcRow, { label: "Hours justified (TSD chart)", value: (tsdRowActual ? tsdRowActual.label : "-") + " hrs = " + justifiedHours + " hrs", color: SB.green }),
+            React.createElement("div", { style: { borderTop: "1px solid #eee", marginTop: 10, paddingTop: 12, display: "flex", justifyContent: "space-between", alignItems: "center" } },
+              React.createElement("span", { style: { fontSize: 12, color: SB.gray } }, "Hours to cut"),
+              React.createElement("span", { style: { fontSize: 26, fontWeight: 700, color: hoursToCut > 0 ? "#c0392b" : SB.green } }, hoursToCut > 0 ? hoursToCut.toFixed(2) + " hrs" : "Keep all staff")
+            )
+          )
+        )
+      )
+    )
+  );
+}
+ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App));
+</script>
+</body>
+</html>
