@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>TSD Target Tracker</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #F2EFE8; font-family: Georgia, serif; }
+input::-webkit-outer-spin-button, input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+input[type=number] { -moz-appearance: textfield; }
+@media print { -webkit-print-color-adjust: exact; print-color-adjust: exact; .no-print { display: none !important; } body { background: white; } }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const SB = {
+  green: "#00704A", darkGreen: "#1E3932", lightGreen: "#D4E9E2",
+  gold: "#CBA258", white: "#FFFFFF", cream: "#F2EFE8",
+  gray: "#747474", lightGray: "#EDEBE4", black: "#1E1E1E"
+};
+
+function generateSlots() {
+  const s = [];
+  for (let h = 5; h < 20; h++) { s.push({hour:h,min:0}); s.push({hour:h,min:30}); }
+  s.push({hour:20,min:0});
+  return s;
+}
+
+function fmtTime(h, m) {
+  const a = h < 12 ? "AM" : "PM";
+  const h2 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+  return h2 + ":" + (m === 0 ? "00" : "30") + " " + a;
+}
+
+function timeToDecimal(h, m) { return h + m / 60; }
+
+function parseTimeInput(str) {
+  if (!str) return null;
+  str = str.trim().toLowerCase().replace(/\s+/g, "");
+  let a = null;
+  if (str.endsWith("am") || str.endsWith("a")) { a = "am"; str = str.replace(/(am|a)$/, ""); }
+  else if (str.endsWith("pm") || str.endsWith("p")) { a = "pm"; str = str.replace(/(pm|p)$/, ""); }
+  const p = str.split(/[:.]/);
+  let h = parseInt(p[0]);
+  const m = p[1] ? parseInt(p[1]) : 0;
+  if (isNaN(h)) return null;
+  if (a === "pm" && h !== 12) h += 12;
+  if (a === "am" && h === 12) h = 0;
+  if (a === null && h < 5) h += 12;
+  return { h, m };
+}
+
+const TSD_CHART = [
+  {min:0,max:24,label:"0-1",hours:0},
+  {min:24,max:39,label:"1-2",hours:1.5},
+  {min:39,max:54,label:"2-3",hours:2.5},
+  {min:54,max:68,label:"3-4",hours:3.5},
+  {min:68,max:83,label:"4-5",hours:4.5},
+  {min:83,max:98,label:"5-6",hours:5.5},
+  {min:98,max:124,label:"6-7",hours:6.5},
+  {min:124,max:154,label:"7-8",hours:7.5},
+  {min:154,max:Infinity,label:"7-8+",hours:8}
+];
+
+function getTSDRow(t) {
+  return TSD_CHART.find(r => t >= r.min && t < r.max) || TSD_CHART[TSD_CHART.length - 1];
+}
+
+const SLOTS = generateSlots();
+const ce = React.createElement;
+
+function SBLabel({children, noBottom}) {
+  return ce("div", {style:{fontSize:9,color:SB.darkGreen,textTransform:"uppercase",letterSpacing:"0.18em",fontWeight:700,marginBottom:noBottom?0:7}}, children);
+}
+function STH({children, white, green}) {
+  return ce("div", {style:{fontSize:9,color:white?SB.white:green?SB.darkGreen:SB.gray,textTransform:"uppercase",letterSpacing:"0.1em",padding:"8px 10px",fontWeight:700}}, children);
+}
+function Pill({label, value, color}) {
+  return ce("div", {style:{background:SB.white,border:"1px solid #ddd",borderRadius:8,padding:"7px 10px",flex:1,textAlign:"center"}},
+    ce("div", {style:{fontSize:8,color:SB.gray,textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:3}}, label),
+    ce("div", {style:{fontSize:13,fontWeight:700,color}}, value)
+  );
+}
+function Stat({label, value}) {
+  return ce("div", null,
+    ce("div", {style:{fontSize:8,color:SB.lightGreen,textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:2}}, label),
+    ce("div", {style:{fontSize:13,fontWeight:700,color:SB.white}}, value)
+  );
+}
+function CRow({label, value, color}) {
+  return ce("div", {style:{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:"1px solid #f0f0f0"}},
+    ce("span", {style:{fontSize:11,color:SB.gray}}, label),
+    ce("span", {style:{fontSize:12,fontWeight:600,color:color||SB.black}}, value)
+  );
+}
+
+function App() {
+  const [view, setView] = React.useState("manager");
+  const [planned, setPlanned] = React.useState("");
+  const [scheduled, setScheduled] = React.useState("");
+  const [dayLabel, setDayLabel] = React.useState("");
+  const [dailyTSD, setDailyTSD] = React.useState("");
+  const [windows, setWindows] = React.useState([{start:"",end:""}]);
+  const [projTSD, setProjTSD] = React.useState(Array(SLOTS.length).fill(""));
+  const [actTSD, setActTSD] = React.useState(Array(SLOTS.length).fill(""));
+  const [published, setPublished] = React.useState(false);
+  const [checkIns, setCheckIns] = React.useState(["Before Peak","After Peak","2:00 PM","4:00 PM"]);
+
+  const pN = parseFloat(planned) || 0;
+  const sN = parseFloat(scheduled) || 0;
+  const extra = Math.max(0, sN - pN);
+  const dTSD = parseFloat(dailyTSD) || 0;
+  const bump = pN > 0 ? extra / pN : 0;
+  const newDailyTSD = dTSD > 0 ? Math.round(dTSD * (1 + bump)) : 0;
+
+  const parsedWins = React.useMemo(() =>
+    windows.map(w => {
+      const s = parseTimeInput(w.start);
+      const e = parseTimeInput(w.end);
+      return s && e ? {sh:s.h,sm:s.m,eh:e.h,em:e.m} : null;
+    }).filter(Boolean), [windows]);
+
+  const fws = parsedWins.length > 0 ? Math.min(...parsedWins.map(w => timeToDecimal(w.sh, w.sm))) : null;
+  const lwe = parsedWins.length > 0 ? Math.max(...parsedWins.map(w => timeToDecimal(w.eh, w.em))) : null;
+
+  function getZone(slot) {
+    const t = timeToDecimal(slot.hour, slot.min);
+    if (fws === null) return "none";
+    if (t < fws) return "before";
+    if (parsedWins.some(w => t >= timeToDecimal(w.sh,w.sm) && t <= timeToDecimal(w.eh,w.em))) return "inside";
+    return "carry";
+  }
+
+  function zc(z) {
+    if (z === "inside") return SB.green;
+    if (z === "carry") return SB.gold;
+    return SB.gray;
+  }
+
+  const targets = React.useMemo(() => {
+    // Each slot: system projected running total, bumped proportionally
+    // Before window: unchanged
+    // From first window start onward: scale so end-of-day hits dailyTSD*(1+bump)
+    const lastFilledIdx = SLOTS.reduce((acc, s, i) => projTSD[i] !== "" ? i : acc, -1);
+    if (lastFilledIdx < 0) return SLOTS.map(() => null);
+    const projectedEndOfDay = parseFloat(projTSD[lastFilledIdx]) || 0;
+    const newEndOfDay = projectedEndOfDay * (1 + bump);
+
+    return SLOTS.map((slot, i) => {
+      const base = parseFloat(projTSD[i]);
+      if (isNaN(base) || projTSD[i] === "") return null;
+      const z = getZone(slot);
+      if (z === "before" || z === "none") return Math.round(base);
+      // Scale this slot proportionally toward the new end-of-day total
+      if (projectedEndOfDay === 0) return Math.round(base);
+      return Math.round(base * (newEndOfDay / projectedEndOfDay));
+    });
+  }, [projTSD, parsedWins, bump]);
+
+  const hasT = targets.some(t => t !== null);
+  const winDbg = parsedWins.map(w => fmtTime(w.sh,w.sm)+"-"+fmtTime(w.eh,w.em)).join(", ");
+
+  const updProj = (i,v) => setProjTSD(p => { const n=[...p]; n[i]=v; return n; });
+  const updAct  = (i,v) => setActTSD(p  => { const n=[...p]; n[i]=v; return n; });
+  const addWin  = () => setWindows(p => [...p, {start:"",end:""}]);
+  const remWin  = (i) => setWindows(p => p.filter((_,idx) => idx !== i));
+  const updWin  = (i,f,v) => setWindows(p => { const n=[...p]; n[i]={...n[i],[f]:v}; return n; });
+
+  const handlePaste = (e) => {
+    const raw = e.target.value;
+    const cleaned = raw.replace(/running total/i, "").trim();
+    const nums = cleaned.split(/[\t,\s]+/).map(v => v.trim()).filter(v => v !== "" && !isNaN(v));
+    if (nums.length > 0) {
+      setProjTSD(p => { const n=[...p]; nums.forEach((v,i) => { if(i<n.length) n[i]=v; }); return n; });
+    }
+  };
+
+  const lastIdx = React.useMemo(() => actTSD.reduce((acc,v,i) => v!==""?i:acc, -1), [actTSD]);
+  const curAct  = lastIdx >= 0 ? (parseFloat(actTSD[lastIdx]) || 0) : null;
+  const curTgt  = lastIdx >= 0 ? targets[lastIdx] : null;
+  const gap     = curAct !== null && curTgt !== null ? curAct - curTgt : null;
+  const tsdRow  = curAct !== null ? getTSDRow(curAct) : null;
+  const justH   = tsdRow ? tsdRow.hours : 0;
+  const toCut   = Math.max(0, extra - justH);
+  const paceKey = gap === null ? "neutral" : gap >= 0 ? "good" : gap >= -10 ? "close" : "behind";
+  const paceMap = {
+    neutral: {color:SB.gray,   bg:SB.lightGray, border:"#ccc",     label:"Enter actuals to track"},
+    good:    {color:SB.green,  bg:"#e6f4ee",    border:SB.green,   label:"On Pace - Keep the crew!"},
+    close:   {color:SB.gold,   bg:"#fdf5e6",    border:SB.gold,    label:"Close - Watch It"},
+    behind:  {color:"#c0392b", bg:"#fde8e6",    border:"#c0392b",  label:"Behind - Cut Hours"}
+  };
+  const pm = paceMap[paceKey];
+
+  const inp  = {display:"block",width:"100%",boxSizing:"border-box",background:SB.white,border:"1px solid #ccc",borderRadius:8,color:SB.black,fontFamily:"Georgia, serif",fontSize:15,padding:"10px 12px",outline:"none"};
+  const iInp = {display:"block",width:"100%",boxSizing:"border-box",background:"transparent",border:"none",borderBottom:"1px solid #ccc",color:SB.black,fontFamily:"Georgia, serif",fontSize:14,padding:"3px 4px",outline:"none"};
+  const TABS = [["manager","Setup"],["screenshot","Sheet"],["ssv","SSV"]];
+
+  return ce("div", {style:{minHeight:"100vh",background:SB.cream,color:SB.black,fontFamily:"Georgia, serif"}},
+    ce("div", {style:{background:SB.darkGreen,padding:"16px 18px",display:"flex",alignItems:"center",gap:12},className:"no-print"},
+      ce("div", {style:{width:36,height:36,borderRadius:"50%",background:SB.green,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,border:"2px solid rgba(255,255,255,0.3)"}}, "☕"),
+      ce("div", null,
+        ce("div", {style:{fontSize:10,letterSpacing:"0.2em",color:SB.lightGreen,textTransform:"uppercase",marginBottom:2}}, "Starbucks Labor"),
+        ce("div", {style:{fontSize:20,fontWeight:700,color:SB.white}}, "TSD Target Tracker")
+      ),
+      dayLabel ? ce("div", {style:{marginLeft:"auto",fontSize:13,color:SB.lightGreen}}, dayLabel) : null
+    ),
+    ce("div", {style:{display:"flex",background:SB.green,borderBottom:"3px solid "+SB.darkGreen},className:"no-print"},
+      TABS.map(t => ce("button", {key:t[0],onClick:()=>setView(t[0]),style:{flex:1,padding:"11px 6px",border:"none",background:view===t[0]?SB.white:"transparent",color:view===t[0]?SB.darkGreen:SB.lightGreen,fontFamily:"Georgia, serif",fontSize:11,fontWeight:700,cursor:"pointer",textTransform:"uppercase",borderRadius:view===t[0]?"6px 6px 0 0":0}}, t[1]))
+    ),
+    ce("div", {style:{maxWidth:520,margin:"0 auto",padding:"18px 14px 60px"}},
+
+      view === "manager" && ce("div", {className:"no-print"},
+        ce(SBLabel, null, "Day / Date"),
+        ce("input", {type:"text",placeholder:"e.g. Friday Apr 11",value:dayLabel,onChange:e=>setDayLabel(e.target.value),style:{...inp,marginBottom:12}}),
+        ce("div", {style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}},
+          ce("div", null, ce(SBLabel,null,"Planned Hours"), ce("input",{type:"number",inputMode:"decimal",placeholder:"48.72",value:planned,onChange:e=>setPlanned(e.target.value),style:inp})),
+          ce("div", null, ce(SBLabel,null,"Scheduled Hours"), ce("input",{type:"number",inputMode:"decimal",placeholder:"62.25",value:scheduled,onChange:e=>setScheduled(e.target.value),style:inp}))
+        ),
+        ce(SBLabel, null, "Projected Daily TSD"),
+        ce("input", {type:"number",inputMode:"numeric",placeholder:"e.g. 532",value:dailyTSD,onChange:e=>setDailyTSD(e.target.value),style:{...inp,marginBottom:14}}),
+        pN > 0 && sN > 0 && ce("div", {style:{display:"flex",gap:8,marginBottom:16}},
+          ce(Pill, {label:"Extra Hrs", value:"+"+extra.toFixed(2), color:SB.gold}),
+          ce(Pill, {label:"Bump %", value:(bump*100).toFixed(1)+"%", color:SB.green}),
+          ce(Pill, {label:"New Daily TSD", value:newDailyTSD>0?newDailyTSD:"Enter TSD", color:SB.darkGreen})
+        ),
+        ce("div", {style:{marginBottom:16}},
+          ce("div", {style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}},
+            ce(SBLabel, {noBottom:true}, "Extra Labor Windows"),
+            ce("button", {onClick:addWin,style:{fontSize:11,color:SB.green,background:"transparent",border:"1px solid "+SB.green,borderRadius:6,padding:"4px 10px",cursor:"pointer",fontFamily:"Georgia, serif"}}, "+ Add")
+          ),
+          ce("div", {style:{fontSize:10,color:SB.gray,marginBottom:8}}, "Format: 6:45a, 10:15a, 11a, 12:45p"),
+          windows.map((w,i) => ce("div", {key:i,style:{display:"flex",gap:8,alignItems:"center",marginBottom:8}},
+            ce("input", {type:"text",placeholder:"6:45a",value:w.start,onChange:e=>updWin(i,"start",e.target.value),style:{...inp,flex:1,fontSize:14,padding:"9px 10px"}}),
+            ce("span", {style:{color:SB.gray,fontSize:12}}, "to"),
+            ce("input", {type:"text",placeholder:"10:15a",value:w.end,onChange:e=>updWin(i,"end",e.target.value),style:{...inp,flex:1,fontSize:14,padding:"9px 10px"}}),
+            windows.length > 1 && ce("button", {onClick:()=>remWin(i),style:{color:"#c0392b",background:"transparent",border:"none",cursor:"pointer",fontSize:18,padding:"0 4px"}}, "x")
+          )),
+          winDbg ? ce("div", {style:{fontSize:10,color:SB.green,marginTop:4}}, "Parsed: "+winDbg) : null
+        ),
+        ce("div", {style:{marginBottom:16}},
+          ce("div", {style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}},
+            ce(SBLabel, {noBottom:true}, "SSV Check-In Times"),
+            ce("button", {onClick:()=>setCheckIns(p=>[...p,""]),style:{fontSize:11,color:SB.green,background:"transparent",border:"1px solid "+SB.green,borderRadius:6,padding:"4px 10px",cursor:"pointer",fontFamily:"Georgia, serif"}}, "+ Add")
+          ),
+          ce("div", {style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}},
+            checkIns.map((t,i) => ce("div", {key:i,style:{display:"flex",gap:6,alignItems:"center"}},
+              ce("input", {type:"text",value:t,onChange:e=>setCheckIns(p=>{const n=[...p];n[i]=e.target.value;return n;}),style:{...inp,flex:1,fontSize:13,padding:"8px 10px"}}),
+              checkIns.length > 1 && ce("button", {onClick:()=>setCheckIns(p=>p.filter((_,idx)=>idx!==i)),style:{color:"#c0392b",background:"transparent",border:"none",cursor:"pointer",fontSize:16}}, "x")
+            ))
+          )
+        ),
+        ce(SBLabel, null, "Paste Running Totals from Spreadsheet"),
+        ce("textarea", {placeholder:"Paste Running Total row here:\n0  0  11  25  42  70...",rows:3,onChange:handlePaste,style:{...inp,fontSize:12,resize:"vertical",marginBottom:4}}),
+        ce("div", {style:{fontSize:10,color:SB.gray,marginBottom:14}}, "Copy the Running Total row and paste - slots fill automatically"),
+        ce(SBLabel, null, "System Projected TSD - per half-hour"),
+        ce("div", {style:{background:SB.white,border:"1px solid #ccc",borderRadius:12,overflow:"hidden",marginBottom:14}},
+          ce("div", {style:{display:"grid",gridTemplateColumns:"85px 14px 1fr 95px",borderBottom:"1px solid #e0e0e0",background:SB.lightGreen}},
+            ce(STH,null,"Time"), ce(STH,null), ce(STH,null,"System TSD"), ce(STH,{green:true},"Target")
+          ),
+          ce("div", {style:{maxHeight:340,overflowY:"auto"}},
+            SLOTS.map((slot,i) => {
+              const z = getZone(slot);
+              const tgt = targets[i];
+              const hv = projTSD[i] !== "";
+              return ce("div", {key:i,style:{display:"grid",gridTemplateColumns:"85px 14px 1fr 95px",borderBottom:"1px solid #f0f0f0",background:z==="inside"?"#e8f5ee":z==="carry"?"#fdf8ee":SB.white}},
+                ce("div", {style:{padding:"7px 10px",fontSize:10,color:hv?SB.black:"#bbb",display:"flex",alignItems:"center"}}, fmtTime(slot.hour,slot.min)),
+                ce("div", {style:{display:"flex",alignItems:"center",justifyContent:"center"}},
+                  z !== "before" && z !== "none" && ce("div", {style:{width:5,height:5,borderRadius:"50%",background:zc(z)}})
+                ),
+                ce("div", {style:{padding:"5px 8px",display:"flex",alignItems:"center"}},
+                  ce("input", {type:"number",inputMode:"numeric",placeholder:"-",value:projTSD[i],onChange:e=>updProj(i,e.target.value),style:iInp})
+                ),
+                ce("div", {style:{padding:"7px 10px",display:"flex",alignItems:"center"}},
+                  ce("span", {style:{fontSize:15,fontWeight:700,color:tgt!==null?zc(z):"#ddd"}}, tgt!==null?tgt:"-")
+                )
+              );
+            })
+          )
+        ),
+        hasT && ce("button", {onClick:()=>{setPublished(true);setView("screenshot");},style:{width:"100%",padding:"14px",borderRadius:10,border:"none",background:SB.green,color:SB.white,fontFamily:"Georgia, serif",fontSize:13,fontWeight:700,cursor:"pointer"}}, "Publish and View Sheet")
+      ),
+
+      view === "screenshot" && (
+        !hasT ? ce("div", {style:{textAlign:"center",padding:"40px 20px",color:SB.gray,fontSize:13}}, "Complete Setup first.") :
+        ce("div", null,
+          ce("div", {style:{background:SB.white,borderRadius:16,overflow:"hidden",border:"1px solid #ddd"}},
+            ce("div", {style:{background:SB.darkGreen,padding:"16px 20px"}},
+              ce("div", {style:{display:"flex",alignItems:"center",gap:10,marginBottom:10}},
+                ce("div", {style:{width:32,height:32,borderRadius:"50%",background:SB.green,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,border:"2px solid rgba(255,255,255,0.3)"}}, "☕"),
+                ce("div", null,
+                  ce("div", {style:{fontSize:9,color:SB.lightGreen,textTransform:"uppercase",letterSpacing:"0.15em"}}, "TSD Target Sheet"),
+                  ce("div", {style:{fontSize:20,fontWeight:700,color:SB.white}}, dayLabel||"Today")
+                )
+              ),
+              ce("div", {style:{display:"flex",gap:16,flexWrap:"wrap",marginBottom:12}},
+                ce(Stat,{label:"Extra Hrs",value:"+"+extra.toFixed(2)}),
+                ce(Stat,{label:"Bump %",value:(bump*100).toFixed(1)+"%"}),
+                ce(Stat,{label:"New Daily TSD",value:newDailyTSD}),
+                parsedWins.map((w,i) => ce(Stat,{key:i,label:"Window "+(i+1),value:fmtTime(w.sh,w.sm)+" - "+fmtTime(w.eh,w.em)}))
+              ),
+              checkIns.filter(t=>t.trim()).length > 0 && ce("div", {style:{borderTop:"1px solid rgba(255,255,255,0.2)",paddingTop:10}},
+                ce("div", {style:{fontSize:8,color:SB.lightGreen,textTransform:"uppercase",letterSpacing:"0.15em",marginBottom:6}}, "SSV Check-In Times"),
+                ce("div", {style:{display:"flex",gap:8,flexWrap:"wrap"}},
+                  checkIns.filter(t=>t.trim()).map((t,i) => ce("div", {key:i,style:{background:"rgba(255,255,255,0.15)",borderRadius:6,padding:"4px 10px",fontSize:12,color:SB.white,fontWeight:700}}, t))
+                )
+              )
+            ),
+            ce("div", {style:{background:SB.lightGreen,padding:"8px 16px",display:"flex",gap:16,fontSize:10,color:SB.darkGreen}},
+              ce("span", null, ce("b",{style:{color:SB.green}},"Green"), " = extra labor window"),
+              ce("span", null, ce("b",{style:{color:SB.gold}},"Gold"), " = partial carry")
+            ),
+            ce("div", {style:{display:"grid",gridTemplateColumns:"90px 14px 1fr 90px",background:SB.green}},
+              ce(STH,{white:true},"Time"), ce(STH,{white:true}), ce(STH,{white:true},"Target TSD"), ce(STH,{white:true},"Actual")
+            ),
+            SLOTS.map((slot,i) => {
+              const tgt = targets[i];
+              if (tgt === null) return null;
+              const z = getZone(slot);
+              const even = i % 2 === 0;
+              return ce("div", {key:i,style:{display:"grid",gridTemplateColumns:"90px 14px 1fr 90px",borderBottom:"1px solid #f0f0f0",background:z==="inside"?"#e8f5ee":z==="carry"?"#fdf8ee":even?SB.white:SB.cream}},
+                ce("div", {style:{padding:"9px 12px",fontSize:12,fontWeight:z==="inside"?700:400,color:SB.black,display:"flex",alignItems:"center"}}, fmtTime(slot.hour,slot.min)),
+                ce("div", {style:{display:"flex",alignItems:"center",justifyContent:"center"}},
+                  z !== "before" && z !== "none" && ce("div", {style:{width:6,height:6,borderRadius:"50%",background:zc(z)}})
+                ),
+                ce("div", {style:{padding:"9px 12px",display:"flex",alignItems:"center"}},
+                  ce("span", {style:{fontSize:20,fontWeight:700,color:zc(z)}}, tgt)
+                ),
+                ce("div", {style:{padding:"9px 12px",display:"flex",alignItems:"center"}},
+                  ce("div", {style:{width:"80%",borderBottom:"1.5px solid #bbb",height:22}})
+                )
+              );
+            }),
+            ce("div", {style:{background:SB.darkGreen,padding:"10px 16px",display:"flex",justifyContent:"space-between",alignItems:"center"}},
+              ce("div", {style:{fontSize:10,color:SB.lightGreen}}, "Planned "+pN.toFixed(2)+" - Scheduled "+sN.toFixed(2)),
+              ce("div", {style:{fontSize:16}}, "☕")
+            )
+          ),
+          ce("div", {style:{display:"flex",gap:10,marginTop:14},className:"no-print"},
+            ce("button", {onClick:()=>window.print(),style:{flex:1,padding:"13px",borderRadius:10,border:"none",background:SB.green,color:SB.white,fontFamily:"Georgia, serif",fontSize:13,fontWeight:700,cursor:"pointer"}}, "Print / Save as PDF")
+          ),
+          ce("div", {style:{fontSize:10,color:SB.gray,textAlign:"center",marginTop:6},className:"no-print"}, "In print dialog choose Save as PDF")
+        )
+      ),
+
+      view === "ssv" && ce("div", {className:"no-print"},
+        !published || !hasT ? ce("div", {style:{textAlign:"center",padding:"40px 20px",color:SB.gray,fontSize:13}}, "Complete Setup first.") :
+        ce("div", null,
+          ce("div", {style:{background:pm.bg,border:"2px solid "+pm.border,borderRadius:12,padding:"14px 18px",marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"center"}},
+            ce("div", null,
+              ce("div", {style:{fontSize:14,fontWeight:700,color:pm.color,marginBottom:4}}, pm.label),
+              gap !== null && ce("div", {style:{fontSize:11,color:SB.gray}}, "Actual "+curAct+" vs target "+curTgt+" ("+(gap>=0?"+":"")+gap+")")
+            ),
+            gap !== null && gap < 0 && ce("div", {style:{textAlign:"right"}},
+              ce("div", {style:{fontSize:9,color:SB.gray,marginBottom:2}}, "CUT"),
+              ce("div", {style:{fontSize:32,fontWeight:700,color:pm.color,lineHeight:1}}, toCut.toFixed(1)),
+              ce("div", {style:{fontSize:9,color:SB.gray}}, "hrs")
+            )
+          ),
+          ce("div", {style:{display:"flex",gap:8,marginBottom:14}},
+            ce(Pill,{label:"Day",value:dayLabel||"-",color:SB.darkGreen}),
+            ce(Pill,{label:"Extra Hrs",value:"+"+extra.toFixed(2),color:SB.gold}),
+            ce(Pill,{label:"Bump %",value:(bump*100).toFixed(1)+"%",color:SB.green})
+          ),
+          ce("div", {style:{background:SB.white,border:"1px solid #ddd",borderRadius:12,overflow:"hidden",marginBottom:14}},
+            ce("div", {style:{display:"grid",gridTemplateColumns:"80px 14px 70px 1fr 55px",background:SB.green}},
+              ce(STH,{white:true},"Time"), ce(STH,{white:true}), ce(STH,{white:true},"Target"), ce(STH,{white:true},"Actual"), ce(STH,{white:true},"+/-")
+            ),
+            ce("div", {style:{maxHeight:420,overflowY:"auto"}},
+              SLOTS.map((slot,i) => {
+                const tgt = targets[i];
+                if (tgt === null) return null;
+                const z = getZone(slot);
+                const act = parseFloat(actTSD[i]);
+                const hA = actTSD[i] !== "" && !isNaN(act);
+                const diff = hA ? act - tgt : null;
+                const isL = i === lastIdx;
+                return ce("div", {key:i,style:{display:"grid",gridTemplateColumns:"80px 14px 70px 1fr 55px",borderBottom:"1px solid #f0f0f0",background:isL?SB.lightGreen:z==="inside"?"#e8f5ee":SB.white}},
+                  ce("div", {style:{padding:"7px 8px",fontSize:10,color:isL?SB.darkGreen:SB.gray,display:"flex",alignItems:"center"}}, fmtTime(slot.hour,slot.min)),
+                  ce("div", {style:{display:"flex",alignItems:"center",justifyContent:"center"}},
+                    z !== "before" && z !== "none" && ce("div", {style:{width:5,height:5,borderRadius:"50%",background:zc(z)}})
+                  ),
+                  ce("div", {style:{padding:"7px 8px",fontSize:15,fontWeight:700,color:zc(z),display:"flex",alignItems:"center"}}, tgt),
+                  ce("div", {style:{padding:"5px 6px",display:"flex",alignItems:"center"}},
+                    ce("input", {type:"number",inputMode:"numeric",placeholder:"enter",value:actTSD[i],onChange:e=>updAct(i,e.target.value),style:iInp})
+                  ),
+                  ce("div", {style:{padding:"7px 6px",fontSize:13,fontWeight:700,display:"flex",alignItems:"center",color:diff===null?"#ccc":diff>=0?SB.green:"#c0392b"}},
+                    diff === null ? "-" : (diff >= 0 ? "+" : "") + diff
+                  )
+                );
+              })
+            )
+          ),
+          lastIdx >= 0 && ce("div", {style:{background:SB.white,border:"2px solid "+(toCut>0?"#c0392b":SB.green),borderRadius:12,padding:16}},
+            ce("div", {style:{fontSize:9,color:SB.gray,textTransform:"uppercase",letterSpacing:"0.15em",marginBottom:10}}, "Cut Calculation"),
+            ce(CRow,{label:"Extra hours scheduled",value:"+"+extra.toFixed(2)+" hrs",color:SB.gold}),
+            ce(CRow,{label:"TSD at "+fmtTime(SLOTS[lastIdx].hour,SLOTS[lastIdx].min),value:curAct+" transactions"}),
+            ce(CRow,{label:"Hours justified (TSD chart)",value:(tsdRow?tsdRow.label:"-")+" hrs = "+justH+" hrs",color:SB.green}),
+            ce("div", {style:{borderTop:"1px solid #eee",marginTop:10,paddingTop:12,display:"flex",justifyContent:"space-between",alignItems:"center"}},
+              ce("span", {style:{fontSize:12,color:SB.gray}}, "Hours to cut"),
+              ce("span", {style:{fontSize:26,fontWeight:700,color:toCut>0?"#c0392b":SB.green}}, toCut>0?toCut.toFixed(2)+" hrs":"Keep all staff")
+            )
+          )
+        )
+      )
+    )
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App));
+</script>
+</body>
+</html>
